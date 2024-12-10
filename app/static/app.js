@@ -5,6 +5,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const queryInput = document.getElementById('queryInput');
     const queryResult = document.getElementById('queryResult');
 
+    // Setup WebSocket connection
+    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+    
+    ws.onmessage = function(event) {
+        const update = JSON.parse(event.data);
+        updateArticleSummary(update.articleId, update.summary);
+    };
+
     // Load articles on page load
     fetchArticles();
 
@@ -88,7 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function displayArticles(articles) {
-        articlesContainer.innerHTML = articles.length ? '' : '<div class="alert alert-info">No articles available. Click "Scrape Latest Articles" to fetch some!</div>';
+        articlesContainer.innerHTML = articles.length ? '' : 
+            '<div class="alert alert-info">No articles available. Click "Scrape Latest Articles" to fetch some!</div>';
         
         articles.forEach(article => {
             const articleElement = document.createElement('div');
@@ -97,12 +106,93 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="card-body">
                     <h5 class="card-title">${escapeHtml(article.title)}</h5>
                     <p class="timestamp">Scraped: ${new Date(article.scraped_at).toLocaleString()}</p>
-                    <p class="article-summary">${escapeHtml(article.summary || 'No summary available')}</p>
-                    <a href="${article.url}" target="_blank" class="btn btn-outline-primary btn-sm">Read Full Article</a>
+                    <div class="summary-section" id="summary-${article.id}">
+                        ${article.summary ? 
+                            `<p class="article-summary">${escapeHtml(article.summary)}</p>` :
+                            `<div class="summary-loading">
+                                <div class="d-flex align-items-center">
+                                    <div class="spinner-border spinner-border-sm me-2"></div>
+                                    <span>Generating summary...</span>
+                                </div>
+                                <div class="progress-bar-container mt-2">
+                                    <div class="progress-bar" style="width: 0%"></div>
+                                </div>
+                            </div>`
+                        }
+                    </div>
+                    <div class="mt-3">
+                        <a href="${article.url}" target="_blank" class="btn btn-outline-primary btn-sm me-2">Read Full Article</a>
+                        ${!article.summary ? 
+                            `<button class="btn btn-outline-secondary btn-sm generate-summary" data-article-id="${article.id}">
+                                Generate Summary
+                            </button>` : ''
+                        }
+                    </div>
                 </div>
             `;
             articlesContainer.appendChild(articleElement);
+
+            // Add event listener for generate summary button if it exists
+            const generateBtn = articleElement.querySelector('.generate-summary');
+            if (generateBtn) {
+                generateBtn.addEventListener('click', () => generateSummary(article.id));
+            }
         });
+    }
+
+    async function generateSummary(articleId) {
+        try {
+            const response = await fetch(`/generate-summary/${articleId}`, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            // Summary generation started - UI will update via WebSocket
+            const summarySection = document.getElementById(`summary-${articleId}`);
+            summarySection.innerHTML = `
+                <div class="summary-loading">
+                    <div class="d-flex align-items-center">
+                        <div class="spinner-border spinner-border-sm me-2"></div>
+                        <span>Generating summary...</span>
+                    </div>
+                    <div class="progress-bar-container mt-2">
+                        <div class="progress-bar" style="width: 0%"></div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Error generating summary:', error);
+            alert('Error generating summary. Please try again.');
+        }
+    }
+
+    function updateArticleSummary(articleId, summary, progress = 100) {
+        const summarySection = document.getElementById(`summary-${articleId}`);
+        if (!summarySection) return;
+
+        if (progress < 100) {
+            // Update progress bar
+            const progressBar = summarySection.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+            }
+        } else {
+            // Summary is complete
+            summarySection.innerHTML = `<p class="article-summary">${escapeHtml(summary)}</p>`;
+            
+            // Remove the generate summary button if it exists
+            const generateBtn = document.querySelector(`button[data-article-id="${articleId}"]`);
+            if (generateBtn) {
+                generateBtn.remove();
+            }
+        }
     }
 
     function setLoading(button, isLoading) {
